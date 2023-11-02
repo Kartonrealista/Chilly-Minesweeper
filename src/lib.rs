@@ -26,7 +26,7 @@ impl Display for Winstate {
         let out = match self {
             Winstate::Won => "You won!",
             Winstate::Lost => "You lost!",
-            Winstate::InProgress => "In progress...",
+            Winstate::InProgress => "Game in progress...",
         };
         write!(f, "{}", out)
     }
@@ -408,15 +408,12 @@ fn playfield(game: &Game) -> iced::widget::Container<Message> {
                             text(format!("{h}")).style(theme::Text::Color(
                                 Color::from_rgb(
                                     (((h as f32) / 25.5 * 100.0).floor()
-                                        as f32
                                         - ((h as f32) / 25.5 * 100.0))
                                         .abs(),
                                     (((h as f32) / 65.33 * 100.0).ceil()
-                                        as f32
                                         - ((h as f32) / 65.33 * 100.0))
                                         .abs(),
                                     (((h as f32) / 15.73 * 100.0).ceil()
-                                        as f32
                                         - ((h as f32) / 15.73 * 100.0))
                                         .abs(),
                                 ),
@@ -440,7 +437,7 @@ fn playfield(game: &Game) -> iced::widget::Container<Message> {
 
     let playboard = (0..WIDTH).fold(Row::new(), |acc, column| {
         let new_column = (0..HEIGHT).fold(Column::new(), |acc2, row| {
-            acc2.push(tilebutton(pair_to_index(row, column) as usize))
+            acc2.push(tilebutton(pair_to_index(row, column)))
         });
         acc.push(new_column.spacing(2).align_items(Alignment::Center))
     });
@@ -464,7 +461,6 @@ fn playfield(game: &Game) -> iced::widget::Container<Message> {
         .padding(20)
         .align_items(Alignment::Center),
     )
-    .into()
 }
 const FONT: Font = Font::with_name("Symbola-Regular");
 fn icon(unicode: char) -> Text<'static> {

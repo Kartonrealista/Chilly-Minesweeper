@@ -3,8 +3,9 @@ extern crate alloc;
 use iced::{
     alignment::{self, Horizontal, Vertical},
     executor, font,
-    widget::{button, container, mouse_area, text, Column, Row, Text},
-    Application, Command, Font, Theme, {theme, Length}, {Alignment, Element},
+    widget::{self, button, container, mouse_area, text, Column, Row, Text},
+    Application, Color, Command, Font, Theme, {theme, Length},
+    {Alignment, Element},
 };
 use rand::{seq::index::sample, thread_rng};
 use std::{
@@ -18,7 +19,7 @@ pub const HEIGHT: usize = 16;
 enum Winstate {
     Won,
     Lost,
-    InProgress
+    InProgress,
 }
 impl Display for Winstate {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
@@ -59,7 +60,8 @@ pub struct Board(pub Vec<Tile>);
 pub struct Game {
     board: Board,
     has_ended: bool,
-    winstate: Winstate
+    winstate: Winstate,
+    marked_count: u32,
 }
 
 impl Board {
@@ -131,29 +133,19 @@ impl Board {
         Board(out)
     }
 
-    pub fn set_mines(&mut self, num: usize) {
-        for id in sample(&mut thread_rng(), WIDTH * HEIGHT, num) {
+    pub fn set_mines(&mut self, mine_count: usize) {
+        for id in sample(&mut thread_rng(), WIDTH * HEIGHT, mine_count) {
             self.0[id].mined = true
         }
-    }
-
-    pub fn mark(&mut self, i: usize, j: usize) {
-        let tile = &mut self.0[pair_to_index(i, j)];
-        tile.marked = true
-    }
-
-    pub fn unmark(&mut self, i: usize, j: usize) {
-        let tile = &mut self.0[pair_to_index(i, j)];
-        tile.marked = false
     }
 
     fn reveal_all_mines(&mut self) {
         self.0
             .iter_mut()
             .filter(|tile| tile.mined)
+            .filter(|tile| !tile.marked)
             .for_each(|tile| {
                 tile.hidden = false;
-                tile.marked = false
             })
     }
 }
@@ -242,19 +234,23 @@ impl Game {
             if self.board.0[tile2].hidden {
                 if let Hint(h) = self.board.mine_or_hint(tile2) {
                     if h == 0 {
-                        if !self.board.0[tile2].marked {
-                            self.board.0[tile2].hidden = false;
-                            self.guess_helper(tile2, true)
+                        if self.board.0[tile2].marked {
+                            self.unmark(tile2)
                         }
+                        self.board.0[tile2].hidden = false;
+                        self.guess_helper(tile2, true)
                     } else if check {
-                        if !self.board.0[tile2].marked {
-                            self.board.0[tile2].hidden = false
+                        if self.board.0[tile2].marked {
+                            self.unmark(tile2)
                         }
+                        self.board.0[tile2].hidden = false;
                     }
                 }
                 if let Hint(h0) = self.board.mine_or_hint(id) {
                     if h0 == 0 {
-                        self.board.0[tile2].marked = false;
+                        if self.board.0[tile2].marked {
+                            self.unmark(tile2)
+                        }
                         self.board.0[tile2].hidden = false;
                     }
                 }
@@ -262,25 +258,33 @@ impl Game {
         }
     }
 
-    pub fn guess(&mut self, i: usize, j: usize) {
-        let tile = &mut self.board.0[pair_to_index(i, j)];
+    pub fn mark(&mut self, id: usize) {
+        let tile = &mut self.board.0[id];
+        self.marked_count += 1;
+        tile.marked = true
+    }
+
+    pub fn unmark(&mut self, id: usize) {
+        let tile = &mut self.board.0[id];
+        self.marked_count -= 1;
+        tile.marked = false
+    }
+
+    pub fn guess(&mut self, id: usize) {
+        let tile = &mut self.board.0[id];
         tile.hidden = false;
         if tile.mined {
             self.board.reveal_all_mines();
-            println!("{}", self.board);
-            println!("You lost!");
             self.winstate = Winstate::Lost;
             self.has_ended = true
         }
-        self.guess_helper(pair_to_index(i, j), false);
+        self.guess_helper(id, false);
 
         let is_won = (0..HEIGHT * WIDTH)
             .filter(|&id| !self.board.0[id].mined)
             .all(|id| !self.board.0[id].hidden);
         if is_won {
             self.board.reveal_all_mines();
-            println!("{}", self.board);
-            println!("You won!");
             self.winstate = Winstate::Won;
             self.has_ended = true
         }
@@ -308,9 +312,10 @@ impl Application for Game {
         let mut game = Game {
             board: Board::gen_empty(),
             has_ended: false,
-            winstate: Winstate::InProgress
+            winstate: Winstate::InProgress,
+            marked_count: 0,
         };
-        game.board.set_mines(30);
+        game.board.set_mines(35);
         (
             game,
             font::load(include_bytes!("../fonts/Symbola_hint.ttf").as_slice())
@@ -328,18 +333,11 @@ impl Application for Game {
             Message::MarkedPressed(id) | Message::MarkedRightClick(id)
                 if !self.has_ended =>
             {
-                let (i, j) = index_to_pair(id);
-                self.board.unmark(i, j)
+                self.unmark(id)
             }
-            Message::EmptyPressed(id) if !self.has_ended => {
-                let (i, j) = index_to_pair(id);
-                self.guess(i, j)
-            }
+            Message::EmptyPressed(id) if !self.has_ended => self.guess(id),
             Message::NotHiddenPressed if !self.has_ended => {}
-            Message::HiddenRightClick(id) if !self.has_ended => {
-                let (i, j) = index_to_pair(id);
-                self.board.mark(i, j)
-            }
+            Message::HiddenRightClick(id) if !self.has_ended => self.mark(id),
             Message::FontLoaded(p) => p.expect("font fail"),
             _ => {}
         };
@@ -362,10 +360,8 @@ impl Application for Game {
     }
 }
 
-fn playfield<'a>(game: &Game) -> iced::widget::Container<'a, Message> {
-    let tilebutton = |row: usize, column: usize| match game.board.0
-        [pair_to_index(row, column) as usize]
-    {
+fn playfield(game: &Game) -> iced::widget::Container<Message> {
+    let tilebutton = |id| match game.board.0[id] {
         Tile {
             mined: _,
             hidden: true,
@@ -409,7 +405,22 @@ fn playfield<'a>(game: &Game) -> iced::widget::Container<'a, Message> {
                         if h == 0 {
                             text("")
                         } else {
-                            text(format!("{h}"))
+                            text(format!("{h}")).style(theme::Text::Color(
+                                Color::from_rgb(
+                                    (((h as f32) / 25.5 * 100.0).floor()
+                                        as f32
+                                        - ((h as f32) / 25.5 * 100.0))
+                                        .abs(),
+                                    (((h as f32) / 65.33 * 100.0).ceil()
+                                        as f32
+                                        - ((h as f32) / 65.33 * 100.0))
+                                        .abs(),
+                                    (((h as f32) / 15.73 * 100.0).ceil()
+                                        as f32
+                                        - ((h as f32) / 15.73 * 100.0))
+                                        .abs(),
+                                ),
+                            ))
                         }
                     }
                     Mine => icon('🟐'),
@@ -429,20 +440,26 @@ fn playfield<'a>(game: &Game) -> iced::widget::Container<'a, Message> {
 
     let playboard = (0..WIDTH).fold(Row::new(), |acc, column| {
         let new_column = (0..HEIGHT).fold(Column::new(), |acc2, row| {
-            acc2.push(tilebutton(row, column))
+            acc2.push(tilebutton(pair_to_index(row, column) as usize))
         });
         acc.push(new_column.spacing(2).align_items(Alignment::Center))
     });
 
     container(
-        iced::widget::column![
-            iced::widget::row![button("RESET")
+        widget::column![
+            widget::row![button("RESET")
                 .on_press(Message::Reset)
                 .style(theme::Button::Destructive),]
             .padding(20)
             .align_items(Alignment::Center),
             playboard.spacing(2).align_items(Alignment::Center),
-            text(format!("\n{}", game.winstate))
+            widget::row![
+                text(format!("\n{}", game.winstate)),
+                text(format!("\n⚑: {}", game.marked_count))
+                    .font(FONT)
+                    .shaping(iced::widget::text::Shaping::Advanced)
+            ]
+            .spacing(10)
         ]
         .padding(20)
         .align_items(Alignment::Center),

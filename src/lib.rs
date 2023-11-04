@@ -10,7 +10,7 @@ use iced::{
     Application, Color, Command, Font, Renderer, Theme, {theme, Length},
     {Alignment, Element},
 };
-use rand::{seq::index::sample, thread_rng};
+use rand::thread_rng;
 use std::{
     fmt::{Display, Formatter, Result},
     result,
@@ -52,6 +52,7 @@ pub struct Game {
     winstate: Winstate,
     marked_count: u32,
     menu: Menu,
+    first_pressed: bool,
 }
 
 struct Menu {
@@ -213,14 +214,20 @@ impl Game {
         Board(out)
     }
 
-    pub fn set_mines(&mut self, mine_count: usize) {
-        for id in sample(
-            &mut thread_rng(),
-            self.menu.width * self.menu.height,
-            mine_count,
-        ) {
-            self.board.0[id].mined = true
-        }
+    pub fn set_mines(&mut self, remove_id: usize) {
+        let mut ids = self
+            .board
+            .0
+            .iter()
+            .filter(|tile| tile.id != remove_id)
+            .map(|tile| tile.id)
+            .collect::<Vec<usize>>();
+
+        rand::seq::SliceRandom::shuffle(ids.as_mut_slice(), &mut thread_rng());
+
+        ids.iter().take(self.menu.mine_count).for_each(|&id| {
+            self.board.0[id].mined = true;
+        })
     }
 
     fn reveal_all_mines(&mut self) {
@@ -305,10 +312,10 @@ pub enum Message {
     InputHeight(String),
     InputMineCount(String),
     StartPressed,
-    GotoMenu
+    GotoMenu,
 }
 
-impl<'a> Application for Game {
+impl Application for Game {
     type Message = Message;
     type Theme = Theme;
     type Executor = executor::Default;
@@ -329,6 +336,7 @@ impl<'a> Application for Game {
                 mine_count: 40,
                 start_pressed: false,
             },
+            first_pressed: false,
         };
         (
             game,
@@ -353,7 +361,6 @@ impl<'a> Application for Game {
                     self.menu.mine_count_inptut.parse().unwrap();
 
                 self.board = Self::gen_empty(self.menu.width, self.menu.height);
-                self.set_mines(self.menu.mine_count);
                 self.menu.start_pressed = true;
             }
             Message::InputWidth(input) => self.menu.width_inptut = input,
@@ -363,15 +370,24 @@ impl<'a> Application for Game {
             }
             Message::Reset => {
                 self.board = Self::gen_empty(self.menu.width, self.menu.height);
-                self.set_mines(self.menu.mine_count);
+                self.has_ended = false;
+                self.winstate = Winstate::InProgress;
+                self.marked_count = 0;
+                self.first_pressed = false;
                 self.has_ended = false;
             }
             Message::MarkedPressed(id) | Message::MarkedRightClick(id)
                 if !self.has_ended =>
             {
-                self.unmark(id)
+                self.unmark(id);
             }
-            Message::EmptyPressed(id) if !self.has_ended => self.guess(id),
+            Message::EmptyPressed(id) if !self.has_ended => {
+                if !self.first_pressed {
+                    self.first_pressed = true;
+                    self.set_mines(id);
+                }
+                self.guess(id);
+            }
             Message::HiddenRightClick(id) if !self.has_ended => self.mark(id),
 
             _ => {}
@@ -399,7 +415,7 @@ impl<'a> Application for Game {
     }
 }
 
-fn playfield<'a>(game: &'a Game) -> iced::widget::Container<'a, Message> {
+fn playfield(game: &Game) -> iced::widget::Container<Message> {
     let tilebutton = |id| match game.board.0[id] {
         Tile {
             mined: _,
@@ -463,26 +479,24 @@ fn playfield<'a>(game: &'a Game) -> iced::widget::Container<'a, Message> {
             });
         acc.push(new_column.spacing(2).align_items(Alignment::Center))
     });
-
+    let winstate_box = text(format!("\n{}", game.winstate));
+    let marked_box = text(format!("\n⚑: {}", game.marked_count))
+        .font(FONT)
+        .shaping(iced::widget::text::Shaping::Advanced);
+    let menu_button = button("MENU")
+        .on_press(Message::GotoMenu)
+        .style(theme::Button::Positive);
+    let reset_button = button("RESET")
+        .on_press(Message::Reset)
+        .style(theme::Button::Destructive);
     container(
         widget::column![
-            widget::row![button("MENU")
-            .on_press(Message::GotoMenu)
-            .style(theme::Button::Positive),
-            button("RESET")
-                .on_press(Message::Reset)
-                .style(theme::Button::Destructive),]
-            .padding(20)
-            .spacing(20)
-            .align_items(Alignment::Center),
+            widget::row![menu_button, reset_button]
+                .padding(20)
+                .spacing(20)
+                .align_items(Alignment::Center),
             playboard.spacing(2).align_items(Alignment::Center),
-            widget::row![
-                text(format!("\n{}", game.winstate)),
-                text(format!("\n⚑: {}", game.marked_count))
-                    .font(FONT)
-                    .shaping(iced::widget::text::Shaping::Advanced)
-            ]
-            .spacing(10)
+            widget::row![winstate_box, marked_box].spacing(10)
         ]
         .padding(20)
         .align_items(Alignment::Center),

@@ -11,3 +11,8 @@ maintainer = "Karton Realista"
 [dependencies]
 iced = { version = "0.10", features = ["debug"] }
 rand = "0.8.5"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"

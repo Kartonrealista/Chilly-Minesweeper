@@ -224,7 +224,6 @@ impl Game {
             .collect::<Vec<usize>>();
 
         rand::seq::SliceRandom::shuffle(ids.as_mut_slice(), &mut thread_rng());
-
         ids.iter().take(self.menu.mine_count).for_each(|&id| {
             self.board.0[id].mined = true;
         })
